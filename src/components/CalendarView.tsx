@@ -7,10 +7,9 @@ import {
 } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-// 1. Importa o novo componente
 import { CalendarAppointmentSlot } from './CalendarAppointmentSlot'
 
-// Tipagem (Tem que ser igual a do outro arquivo)
+// Tipagem
 interface Appointment {
   id: string
   date: string
@@ -37,10 +36,12 @@ export function CalendarView({ appointments }: CalendarViewProps) {
   const jumpToToday = () => setCurrentDate(new Date())
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl flex flex-col h-[600px] overflow-hidden">
+    // 1. ALTERAÇÃO AQUI: Removi 'h-[600px]' e 'overflow-hidden'
+    // Agora o calendário cresce o quanto precisar e não corta os popups
+    <div className="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl flex flex-col">
       
       {/* CABEÇALHO */}
-      <div className="p-4 flex items-center justify-between border-b border-zinc-800 bg-zinc-950/50 flex-shrink-0 z-20 relative">
+      <div className="p-4 flex items-center justify-between border-b border-zinc-800 bg-zinc-950/50 rounded-t-xl">
         <h2 className="text-xl font-bold text-zinc-100 capitalize flex items-center gap-2">
           {format(currentDate, 'MMMM yyyy', { locale: ptBR })}
         </h2>
@@ -59,7 +60,7 @@ export function CalendarView({ appointments }: CalendarViewProps) {
       </div>
 
       {/* DIAS DA SEMANA */}
-      <div className="grid grid-cols-7 border-b border-zinc-800 bg-zinc-950/30 flex-shrink-0 z-10 relative">
+      <div className="grid grid-cols-7 border-b border-zinc-800 bg-zinc-950/30">
         {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((weekDay) => (
           <div key={weekDay} className="py-2 text-center text-xs font-bold text-zinc-500 uppercase tracking-wider">
             {weekDay}
@@ -68,7 +69,9 @@ export function CalendarView({ appointments }: CalendarViewProps) {
       </div>
 
       {/* GRANDE GRADE */}
-      <div className="grid grid-cols-7 auto-rows-fr flex-1 overflow-y-auto relative z-0">
+      {/* 2. ALTERAÇÃO AQUI: Removi 'overflow-y-auto' e adicionei 'min-h-[500px]'
+         Isso evita barra de rolagem interna que corta o card */}
+      <div className="grid grid-cols-7 auto-rows-fr min-h-[500px]">
         {calendarDays.map((day) => {
             const dayAppointments = appointments.filter(app => 
                 isSameDay(new Date(app.date), day)
@@ -79,7 +82,7 @@ export function CalendarView({ appointments }: CalendarViewProps) {
                 <div 
                     key={day.toString()} 
                     className={`
-                        border-r border-b border-zinc-800/50 p-2 transition-colors relative
+                        border-r border-b border-zinc-800/50 p-2 transition-colors relative min-h-[120px]
                         ${!isCurrentMonth ? 'bg-zinc-950/80 text-zinc-700' : 'bg-zinc-900/50 hover:bg-zinc-900'}
                     `}
                 >
@@ -96,7 +99,6 @@ export function CalendarView({ appointments }: CalendarViewProps) {
                     {/* Lista de Agendamentos */}
                     <div className="space-y-1 relative z-10">
                         {dayAppointments.map(app => (
-                            // 2. Usa o novo componente inteligente aqui!
                             <CalendarAppointmentSlot key={app.id} app={app} />
                         ))}
                     </div>

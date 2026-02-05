@@ -10,7 +10,8 @@ import {
   Scissors, 
   LogOut, 
   Settings,
-  Menu 
+  Menu,
+  Shield // <--- ADICIONEI O ÍCONE DA EQUIPE AQUI
 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -35,6 +36,10 @@ export default function DashboardLayout({
     { href: '/', label: 'Início', icon: LayoutDashboard },
     { href: '/agendamentos', label: 'Agenda', icon: CalendarDays },
     { href: '/clientes', label: 'Clientes', icon: Users },
+    
+    // 👇 NOVO ITEM: EQUIPE 👇
+    { href: '/equipe', label: 'Equipe', icon: Shield }, 
+    
     { href: '/servicos', label: 'Serviços', icon: Scissors },
     { href: '/configuracoes', label: 'Configurações', icon: Settings },
   ]
@@ -109,14 +114,14 @@ export default function DashboardLayout({
           BOTTOM NAVIGATION (APENAS MOBILE - Hidden no Desktop)
           md:hidden = Só aparece em celular
          ========================================================== */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-zinc-900/90 backdrop-blur-lg border-t border-zinc-800 flex justify-around p-2 pb-4 z-50">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-zinc-900/90 backdrop-blur-lg border-t border-zinc-800 flex justify-around p-2 pb-4 z-50 overflow-x-auto">
         {navItems.map((item) => {
             const isActive = pathname === item.href
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex flex-col items-center gap-1 p-2 rounded-lg text-[10px] font-medium transition-all ${
+                className={`flex flex-col items-center gap-1 p-2 rounded-lg text-[10px] font-medium transition-all min-w-[60px] ${
                   isActive 
                     ? 'text-amber-500' 
                     : 'text-zinc-500'

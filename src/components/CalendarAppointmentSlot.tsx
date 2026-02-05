@@ -3,7 +3,14 @@
 import { useState, useRef, useLayoutEffect } from 'react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { Clock, User, DollarSign, Calendar as CalendarIcon, Scissors, AlertCircle } from 'lucide-react'
+import { 
+    Clock, User, DollarSign, Calendar as CalendarIcon, 
+    Scissors, AlertCircle, Trash2, Edit, X, Loader2 
+} from 'lucide-react'
+import { createClient } from '@/utils/supabase/client'
+import { toast } from 'sonner'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 
 interface Appointment {
     id: string
@@ -18,153 +25,193 @@ interface SlotProps {
 }
 
 export function CalendarAppointmentSlot({ app }: SlotProps) {
-    const [isHovered, setIsHovered] = useState(false)
+    const supabase = createClient()
+    const router = useRouter()
     
-    // Estados para controlar ONDE o popover aparece
+    // Estados
+    const [isHovered, setIsHovered] = useState(false)
+    const [isModalOpen, setIsModalOpen] = useState(false) // Controla o Modal
+    const [isDeleting, setIsDeleting] = useState(false)
+    
+    // Posicionamento do Popover (Hover)
     const [verticalPos, setVerticalPos] = useState<'top' | 'bottom'>('top')
     const [horizontalAlign, setHorizontalAlign] = useState<'left' | 'right'>('left')
-    
     const triggerRef = useRef<HTMLDivElement>(null)
-    const popoverRef = useRef<HTMLDivElement>(null)
 
+    // Formatação
     const formatTime = (dateString: string) => {
         return new Date(dateString).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     }
     const formatCurrency = (val: number) => 
         new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val)
 
-    // useLayoutEffect roda ANTES de pintar na tela, evitando "piscadas"
+    // Lógica de Posição do Hover (Mantida igual)
     useLayoutEffect(() => {
-        if (isHovered && triggerRef.current && popoverRef.current) {
-            const triggerRect = triggerRef.current.getBoundingClientRect();
-            const popoverRect = popoverRef.current.getBoundingClientRect();
-            const windowWidth = window.innerWidth;
-            const windowHeight = window.innerHeight;
-
-            // --- CÁLCULO VERTICAL ---
-            // Altura estimada do popover + um respiro
-            const popoverHeight = popoverRect.height + 20; 
+        if (isHovered && triggerRef.current) {
+            const rect = triggerRef.current.getBoundingClientRect();
+            if (rect.top < 230) setVerticalPos('bottom');
+            else setVerticalPos('top');
             
-            // Se o espaço ACIMA do slot for menor que a altura do popover...
-            if (triggerRect.top < popoverHeight) {
-                 // ...joga para BAIXO.
-                 setVerticalPos('bottom');
-            } else {
-                 // Caso contrário, tenta jogar para CIMA (padrão).
-                 // Mas verifica se em cima não vai vazar a tela também (caso raro de tela muito pequena)
-                 if (triggerRect.top - popoverHeight < 0) {
-                    setVerticalPos('bottom'); // Força para baixo se não couber em cima de jeito nenhum
-                 } else {
-                    setVerticalPos('top');
-                 }
-            }
-
-            // --- CÁLCULO HORIZONTAL (Resolve o scrollbar) ---
-            // Largura do popover (w-64 = 256px) + margem de segurança
-            const neededSpaceRight = 270; 
-            const spaceOnRight = windowWidth - triggerRect.left;
-
-            // Se o espaço que sobra na direita for menor que o necessário...
-            if (spaceOnRight < neededSpaceRight) {
-                // ...alinha à DIREITA (cresce para a esquerda, para dentro da tela)
-                setHorizontalAlign('right');
-            } else {
-                // ...alinha à ESQUERDA (cresce para a direita, padrão)
-                setHorizontalAlign('left');
-            }
+            if (window.innerWidth - rect.right < 280) setHorizontalAlign('right');
+            else setHorizontalAlign('left');
         }
-    }, [isHovered]) // Roda toda vez que o mouse entra/sai
+    }, [isHovered]) 
+
+    // --- FUNÇÃO DE EXCLUIR ---
+    const handleDelete = async () => {
+        if (!confirm('Tem certeza que deseja cancelar este agendamento?')) return;
+
+        setIsDeleting(true)
+        try {
+            const { error } = await supabase
+                .from('appointments')
+                .delete() // Ou .update({ status: 'canceled' }) se preferir manter histórico
+                .eq('id', app.id)
+
+            if (error) throw error
+
+            toast.success('Agendamento cancelado com sucesso!')
+            setIsModalOpen(false)
+            router.refresh() // Atualiza a tela para sumir o agendamento
+        } catch (error) {
+            console.error(error)
+            toast.error('Erro ao cancelar.')
+        } finally {
+            setIsDeleting(false)
+        }
+    }
 
     return (
-        // Adicionamos 'group' aqui para facilitar o controle do z-index
-        <div 
-            ref={triggerRef}
-            className="relative group" 
-            onMouseEnter={() => setIsHovered(true)}
-            onMouseLeave={() => setIsHovered(false)}
-        >
-            {/* A Etiqueta */}
-            <div className={`
-                text-xs border rounded px-2 py-1 truncate cursor-pointer transition-all relative
-                ${isHovered 
-                    ? 'bg-amber-500 text-zinc-950 border-amber-500 font-bold z-30' 
-                    : 'bg-zinc-800/80 text-zinc-300 border-zinc-700 hover:border-zinc-500 z-10'
-                }
-                ${app.services ? '' : 'opacity-50'} // Se serviço foi excluído, fica mais apagado
-            `}>
-                {app.services ? (
-                    <>
-                    <span className="mr-1 opacity-70">{formatTime(app.date)}</span>
-                    {app.services.name}
-                    </>
-                ) : (
-                    <div className="flex items-center gap-1 text-red-400">
-                        <AlertCircle size={12} /> Serviço Excluído
+        <>
+            {/* O SLOT NA AGENDA (Clicável) */}
+            <div 
+                ref={triggerRef}
+                className="relative group" 
+                onMouseEnter={() => setIsHovered(true)}
+                onMouseLeave={() => setIsHovered(false)}
+                onClick={() => setIsModalOpen(true)} // <--- CLIQUE ABRE O MODAL
+            >
+                {/* Etiqueta Visual */}
+                <div className={`
+                    text-xs border rounded px-2 py-1 truncate cursor-pointer transition-all relative select-none
+                    ${isHovered 
+                        ? 'bg-amber-500 text-zinc-950 border-amber-500 font-bold z-50' 
+                        : 'bg-zinc-800/80 text-zinc-300 border-zinc-700 hover:border-zinc-500 z-10'
+                    }
+                    ${app.services ? '' : 'opacity-50'}
+                `}>
+                    {app.services ? (
+                        <div className="flex items-center gap-1">
+                            <span className="opacity-70 font-mono text-[10px]">{formatTime(app.date)}</span>
+                            <span className="truncate">{app.services.name}</span>
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-1 text-red-400">
+                            <AlertCircle size={12} /> Excluído
+                        </div>
+                    )}
+                </div>
+
+                {/* POPOVER HOVER (Só resumo visual) */}
+                {isHovered && !isModalOpen && app.services && (
+                    <div className={`absolute w-72 bg-zinc-950 border border-zinc-700 rounded-xl shadow-2xl p-4 z-[999] animate-in fade-in zoom-in-95 duration-150 pointer-events-none
+                        ${verticalPos === 'top' ? 'bottom-full mb-3' : 'top-full mt-3'}
+                        ${horizontalAlign === 'left' ? 'left-0' : 'right-0'}
+                    `}>
+                        {/* Conteúdo do Hover (Mantido igual) */}
+                        <div className="flex items-center justify-between border-b border-zinc-800 pb-2 mb-2">
+                            <span className="text-amber-500 font-bold text-xs flex items-center gap-1">
+                                <Scissors size={12}/> {app.services.name}
+                            </span>
+                            <span className="text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-400">Clique para gerenciar</span>
+                        </div>
+                        <div className="space-y-1 text-xs text-zinc-400">
+                             <p>👤 {app.profiles?.full_name}</p>
+                             <p>🕒 {formatTime(app.date)}</p>
+                        </div>
                     </div>
                 )}
             </div>
 
-            {/* O POP-OVER (Agora com esteroides de posicionamento) */}
-            {isHovered && app.services && (
-                <div 
-                    ref={popoverRef}
-                    className={`absolute w-64 bg-zinc-950 border border-zinc-700 rounded-xl shadow-2xl p-4 z-[100] animate-in fade-in zoom-in-95 duration-150 cursor-default
-                    
-                    /* POSIÇÃO VERTICAL */
-                    ${verticalPos === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'}
-
-                    /* POSIÇÃO HORIZONTAL */
-                    ${horizontalAlign === 'left' ? 'left-0' : 'right-0'}
-                    `}
-                >
-                    
-                    {/* Setinha do Modal (Precisa acompanhar a posição) */}
-                    <div className={`absolute w-3 h-3 bg-zinc-950 rotate-45
-                        /* Vertical da seta */
-                        ${verticalPos === 'top' ? '-bottom-1.5 border-r border-b border-zinc-700' : '-top-1.5 border-l border-t border-zinc-700'}
+            {/* --- O MODAL DE GERENCIAMENTO (Centralizado na Tela) --- */}
+            {isModalOpen && app.services && (
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+                    <div className="bg-zinc-950 border border-zinc-800 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden relative animate-in zoom-in-95 duration-200">
                         
-                        /* Horizontal da seta (para não ficar no canto estranho) */
-                        ${horizontalAlign === 'left' ? 'left-4' : 'right-4'}
-                    `}></div>
+                        {/* Botão Fechar */}
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); setIsModalOpen(false); }}
+                            className="absolute top-4 right-4 p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-full transition-all"
+                        >
+                            <X size={20} />
+                        </button>
 
-                    <div className="relative z-20 space-y-3">
-                        {/* Cabeçalho */}
-                        <div className="border-b border-zinc-800 pb-2">
-                            <h4 className="text-zinc-100 font-bold text-sm flex items-center gap-2 truncate">
-                                <Scissors size={14} className="text-amber-500 flex-shrink-0"/>
-                                <span className="truncate">{app.services.name}</span>
-                            </h4>
-                            <span className={`text-xs font-mono mt-1 block font-bold
-                                ${app.status === 'confirmed' ? 'text-green-500' : 'text-zinc-500'}
-                            `}>
-                                ● {app.status === 'confirmed' ? 'Confirmado' : app.status}
-                            </span>
+                        {/* Cabeçalho do Modal */}
+                        <div className="bg-zinc-900/50 p-6 border-b border-zinc-800">
+                            <h2 className="text-xl font-bold text-zinc-100 flex items-center gap-2">
+                                Gerenciar Agendamento
+                            </h2>
+                            <p className="text-sm text-zinc-400 mt-1">
+                                O que você deseja fazer com este horário?
+                            </p>
                         </div>
 
-                        {/* Detalhes */}
-                        <div className="space-y-2 text-xs text-zinc-400">
-                            <div className="flex items-center gap-2">
-                                <CalendarIcon size={12} className="text-amber-500/70 flex-shrink-0" />
-                                {format(new Date(app.date), "d 'de' MMMM", { locale: ptBR })}
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Clock size={12} className="text-amber-500/70 flex-shrink-0" />
-                                {formatTime(app.date)} - {app.services.duration_minutes} min
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <User size={12} className="text-amber-500/70 flex-shrink-0" />
-                                <span className="truncate">{app.profiles?.full_name || 'Profissional Indefinido'}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-zinc-200 font-bold bg-zinc-900 p-2 rounded-lg mt-3 border border-zinc-800">
-                                <DollarSign size={14} className="text-amber-500 flex-shrink-0" />
-                                <span className="text-lg">
-                                    {formatCurrency(app.services.price)}
-                                </span>
+                        {/* Corpo com Detalhes */}
+                        <div className="p-6 space-y-4">
+                            <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-zinc-500 text-xs font-bold uppercase">Serviço</span>
+                                    <span className="text-amber-500 font-bold flex items-center gap-2">
+                                        <Scissors size={14} /> {app.services.name}
+                                    </span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-zinc-500 text-xs font-bold uppercase">Cliente/Profissional</span>
+                                    <span className="text-zinc-300 font-medium flex items-center gap-2">
+                                        <User size={14} /> {app.profiles?.full_name}
+                                    </span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-zinc-500 text-xs font-bold uppercase">Data e Hora</span>
+                                    <span className="text-zinc-300 font-medium flex items-center gap-2">
+                                        <CalendarIcon size={14} /> 
+                                        {format(new Date(app.date), "dd 'de' MMM", { locale: ptBR })} às {formatTime(app.date)}
+                                    </span>
+                                </div>
+                                <div className="flex items-center justify-between border-t border-zinc-800 pt-3 mt-2">
+                                    <span className="text-zinc-500 text-xs font-bold uppercase">Valor</span>
+                                    <span className="text-green-500 font-bold text-lg flex items-center gap-1">
+                                        <DollarSign size={16} /> {formatCurrency(app.services.price)}
+                                    </span>
+                                </div>
                             </div>
                         </div>
+
+                        {/* Rodapé com Ações */}
+                        <div className="p-6 pt-0 flex gap-3">
+                            {/* Botão EDITAR */}
+                            <Link 
+                                href={`/agendamentos/editar/${app.id}`}
+                                className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2 border border-zinc-700"
+                            >
+                                <Edit size={18} />
+                                Editar
+                            </Link>
+
+                            {/* Botão EXCLUIR */}
+                            <button 
+                                onClick={handleDelete}
+                                disabled={isDeleting}
+                                className="flex-1 bg-red-500/10 hover:bg-red-500 hover:text-white text-red-500 border border-red-500/20 hover:border-red-500 font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2"
+                            >
+                                {isDeleting ? <Loader2 className="animate-spin" /> : <Trash2 size={18} />}
+                                {isDeleting ? 'Cancelando...' : 'Cancelar'}
+                            </button>
+                        </div>
+
                     </div>
                 </div>
             )}
-        </div>
+        </>
     )
 }
