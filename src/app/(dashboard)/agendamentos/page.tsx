@@ -1,10 +1,43 @@
 import { createClient } from '@/utils/supabase/server'
-import { CalendarDays } from 'lucide-react'
+import { CalendarDays, Plus } from 'lucide-react'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { CalendarView } from '@/components/CalendarView'
 
+// Garante que a página sempre busque dados novos (sem cache)
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
+// Tipagem para os dados que vêm do banco
+type AppointmentRaw = {
+  id: string
+  date: string
+  status: string
+  user_id: string
+  barber_id: string
+  services: {
+    name: string
+    price: number
+    duration_minutes: number
+  } | null
+  barber: { full_name: string } | null
+  client: { full_name: string } | null
+}
+
+// Função Auxiliar: Define o nome que aparecerá no card baseado no cargo
+function getDisplayName(app: AppointmentRaw, role: string): string {
+  const barberName = app.barber?.full_name?.split(' ')[0] || 'Desconhecido'
+  const clientName = app.client?.full_name?.split(' ')[0] || 'Desconhecido'
+
+  switch (role) {
+    case 'admin':
+      return `${barberName} ✂️ ${clientName}`
+    case 'barber':
+      return app.client?.full_name || 'Cliente'
+    default: // customer
+      return app.barber?.full_name || 'Barbeiro'
+  }
+}
 
 export default async function AgendaPage() {
   const supabase = await createClient()
@@ -25,81 +58,82 @@ export default async function AgendaPage() {
 
   const userRole = profile?.role || 'customer'
 
-  // 3. Monta a Query Inteligente
+  // 3. Monta a Query Base
   let query = supabase
     .from('appointments')
     .select(`
       id,
       date,
       status,
+      user_id,
+      barber_id,
       services ( name, price, duration_minutes ),
       barber:profiles!barber_id ( full_name ),
       client:profiles!user_id ( full_name )
     `)
-    .order('date', { ascending: true })
-
+    // 🔴 CRUCIAL: Filtra para NÃO trazer os cancelados do banco
+    .neq('status', 'canceled') 
+  
   // 4. Aplica o Filtro baseado no Cargo
   if (userRole === 'customer') {
-    // Cliente só vê seus próprios cortes
     query = query.eq('user_id', user.id)
-  } else if (userRole === 'barber') {
-    // Barbeiro vê os cortes que ELE vai fazer
+  } 
+  else if (userRole === 'barber') {
     query = query.eq('barber_id', user.id)
   }
-  // Admin não tem filtro, vê TUDO.
+  // Admin vê tudo (exceto os cancelados, graças ao filtro acima)
 
-  const { data: appointmentsRaw } = await query
+  // 5. Executa a busca ordenando por data
+  const { data: appointmentsRaw, error } = await query.order('date', { ascending: true })
 
-  // 5. TRUQUE DE MESTRE: Formata os dados para o Calendário
-  // O Calendário espera um objeto "profiles" com o nome da pessoa.
-  // Vamos enganar ele: se sou barbeiro, coloco o nome do cliente ali.
-  const appointments = appointmentsRaw?.map((app: any) => {
-    let displayName = 'Desconhecido'
-    
-    if (userRole === 'barber') {
-        displayName = app.client?.full_name || 'Cliente Sem Nome'
-    } else if (userRole === 'admin') {
-        // Admin vê "Barbeiro - Cliente"
-        const barberName = app.barber?.full_name?.split(' ')[0] || '?'
-        const clientName = app.client?.full_name?.split(' ')[0] || '?'
-        displayName = `${barberName} ✂️ ${clientName}`
-    } else {
-        // Cliente vê o nome do Barbeiro
-        displayName = app.barber?.full_name || 'Barbeiro'
-    }
+  if (error) {
+    console.error("Erro ao buscar agenda:", error)
+  }
 
+  // 6. Formatação dos dados para o componente visual
+  const appointments = (appointmentsRaw as unknown as AppointmentRaw[])?.map((app) => {
     return {
         ...app,
-        profiles: { full_name: displayName } // O componente vai mostrar isso
+        // Injetamos o nome formatado num objeto "profiles" fake
+        profiles: { 
+            full_name: getDisplayName(app, userRole) 
+        } 
     }
-  })
+  }) || []
 
   return (
-    <div className="space-y-8 h-full flex flex-col">
-      <div className="flex items-center justify-between pb-2">
+    <div className="space-y-6 h-full flex flex-col pb-20 md:pb-0">
+      
+      {/* Header da Página */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-zinc-100 flex items-center gap-3">
             <CalendarDays className="w-8 h-8 text-amber-500" />
-            Agenda {userRole === 'admin' ? 'Geral' : (userRole === 'barber' ? 'de Atendimentos' : 'Pessoal')}
+            Agenda {userRole === 'admin' ? 'Geral' : (userRole === 'barber' ? 'Profissional' : 'Pessoal')}
           </h1>
-          <p className="text-zinc-400 mt-2">
+          <p className="text-zinc-400 mt-1">
             {userRole === 'barber' 
-                ? 'Veja seus próximos clientes e horários.' 
-                : 'Visualize todos os seus compromissos do mês.'}
+                ? 'Gerencie seus próximos atendimentos.' 
+                : userRole === 'admin' 
+                    ? 'Visão completa de todos os agendamentos da loja.'
+                    : 'Confira e gerencie seus horários marcados.'}
           </p>
         </div>
         
-        {/* Admin e Cliente podem agendar. Barbeiro geralmente só olha, mas pode agendar também se quiser. */}
+        {/* Botão de Novo Agendamento */}
         <Link 
             href="/agendamentos/novo"
-            className="bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold py-3 px-6 rounded-lg transition-all flex items-center gap-2 shadow-lg shadow-amber-500/20"
+            className="bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold py-3 px-6 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 group"
         >
+            <Plus size={20} className="group-hover:rotate-90 transition-transform" />
             Novo Agendamento
         </Link>
       </div>
 
       {/* CALENDÁRIO INTELIGENTE */}
-      <CalendarView appointments={appointments || []} />
+      <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-xl min-h-[600px]">
+          <CalendarView appointments={appointments} userRole={userRole} />
+      </div>
       
     </div>
   )

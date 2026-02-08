@@ -24,3 +24,49 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+
+/* ... (seu código css existente) ... */
+
+/* 🎨 SCROLLBAR PADRONIZADA (Nordic Tech) */
+
+/* A barra em si */
+::-webkit-scrollbar {
+  width: 8px;   /* Largura vertical */
+  height: 8px;  /* Altura horizontal */
+}
+
+/* O fundo da barra (trilho) */
+::-webkit-scrollbar-track {
+  background: #09090b; /* zinc-950 (fundo bem escuro) */
+  border-radius: 4px;
+}
+
+/* O "polegar" que a gente arrasta */
+::-webkit-scrollbar-thumb {
+  background: #3f3f46; /* zinc-700 (cinza discreto) */
+  border-radius: 4px;
+  border: 2px solid #09090b; /* Borda para dar respiro */
+}
+
+/* Quando passa o mouse em cima do polegar */
+::-webkit-scrollbar-thumb:hover {
+  background: #f59e0b; /* amber-500 (destaque da marca) */
+}
+
+/* ... seu código existente ... */
+
+/* 👇 ADICIONE ISSO NO FINAL DO ARQUIVO 👇 */
+
+/* 📱 SAFE AREA (Evita que o menu cole na barra de gesto do iPhone) */
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+}

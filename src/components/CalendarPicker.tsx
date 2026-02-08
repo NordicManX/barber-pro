@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { 
   format, addMonths, subMonths, startOfMonth, endOfMonth, 
   startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, 
-  isSameDay, isBefore, startOfDay, isToday
+  isSameDay, isBefore, startOfDay, isToday 
 } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
@@ -16,7 +16,9 @@ interface CalendarPickerProps {
 
 export function CalendarPicker({ selectedDate, onSelect }: CalendarPickerProps) {
   const [currentMonth, setCurrentMonth] = useState(new Date())
-  const today = startOfDay(new Date()) // Hoje zerado (00:00)
+  
+  // 🕒 "Hoje" zerado (00:00:00) para comparação correta de dias
+  const today = startOfDay(new Date())
 
   // Navegação
   const nextMonth = () => setCurrentMonth(addMonths(currentMonth, 1))
@@ -33,10 +35,11 @@ export function CalendarPicker({ selectedDate, onSelect }: CalendarPickerProps) 
   return (
     <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 select-none w-full">
       
-      {/* Cabeçalho (Mês e Ano + Setas) */}
+      {/* Cabeçalho */}
       <div className="flex items-center justify-between mb-4">
         <button 
             onClick={prevMonth} 
+            // Bloqueia voltar meses se o mês atual for o mês de hoje
             disabled={isBefore(monthStart, startOfMonth(today))} 
             className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
         >
@@ -67,6 +70,7 @@ export function CalendarPicker({ selectedDate, onSelect }: CalendarPickerProps) 
       {/* Grade de Dias */}
       <div className="grid grid-cols-7 gap-1">
         {days.map(day => {
+          // 🔒 BLOQUEIO DE DIAS: Se o dia for antes de "Hoje 00:00", é passado.
           const isPast = isBefore(day, today)
           const isSelected = selectedDate ? isSameDay(day, new Date(selectedDate + 'T12:00:00')) : false
           const isCurrentMonth = isSameMonth(day, currentMonth)
@@ -75,10 +79,10 @@ export function CalendarPicker({ selectedDate, onSelect }: CalendarPickerProps) 
             <button
               key={day.toString()}
               onClick={() => onSelect(format(day, 'yyyy-MM-dd'))} 
-              disabled={isPast}
+              disabled={isPast} // <--- AQUI OCORRE O BLOQUEIO
               className={`
                 h-9 w-full rounded-lg text-sm font-medium transition-all flex items-center justify-center relative
-                ${isPast ? 'text-zinc-800 cursor-not-allowed' : 'hover:bg-zinc-800 text-zinc-300'}
+                ${isPast ? 'text-zinc-800 cursor-not-allowed bg-zinc-900/30' : 'hover:bg-zinc-800 text-zinc-300'}
                 ${isSelected ? '!bg-amber-500 !text-zinc-950 font-bold shadow-lg shadow-amber-500/20' : ''}
                 ${!isCurrentMonth && !isPast ? 'opacity-30' : ''}
                 ${isToday(day) && !isSelected ? 'border border-amber-500/50 text-amber-500' : ''}
