@@ -6,18 +6,21 @@ import {
   isSameDay, isToday, parseISO, addMonths, subMonths 
 } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { ChevronLeft, ChevronRight, Clock, User, X, Calendar as CalendarIcon, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react'
+import { 
+  ChevronLeft, ChevronRight, Clock, User, X, 
+  Calendar as CalendarIcon, AlertTriangle, Loader2, Scissors 
+} from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
-// Tipagem (deve bater com o que vem da page.tsx)
+// Tipagem
 type Appointment = {
   id: string
   date: string
   status: string
   profiles: { full_name: string }
-  services?: { name: string, price: number } | null
+  services?: { name: string, price: number, duration_minutes?: number } | null
 }
 
 interface CalendarViewProps {
@@ -29,23 +32,23 @@ export function CalendarView({ appointments: initialAppointments, userRole }: Ca
   const supabase = createClient()
   const router = useRouter()
   
-  // ESTADO LOCAL (Para atualização imediata)
+  // ESTADOS
   const [appointments, setAppointments] = useState<Appointment[]>(initialAppointments)
-  
-  // Sincroniza se o pai mandar dados novos
-  useEffect(() => {
-    setAppointments(initialAppointments)
-  }, [initialAppointments])
-
   const [currentDate, setCurrentDate] = useState(new Date())
-  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null)
+  const [selectedDate, setSelectedDate] = useState(new Date())
   
-  // Modais
+  // Modais e Seleção
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null)
   const [isDetailsOpen, setIsDetailsOpen] = useState(false)
   const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false)
   const [canceling, setCanceling] = useState(false)
 
-  // Geração do Calendário
+  // Sincroniza dados novos vindos do pai
+  useEffect(() => {
+    setAppointments(initialAppointments)
+  }, [initialAppointments])
+
+  // GERAÇÃO DO CALENDÁRIO
   const daysInMonth = eachDayOfInterval({
     start: startOfMonth(currentDate),
     end: endOfMonth(currentDate),
@@ -53,6 +56,15 @@ export function CalendarView({ appointments: initialAppointments, userRole }: Ca
   
   const startDay = startOfMonth(currentDate).getDay()
   const emptyDays = Array(startDay).fill(null)
+
+  // FILTROS
+  const getAppointmentsOnDate = (date: Date) => {
+    return appointments.filter(app => isSameDay(parseISO(app.date), date))
+  }
+
+  const selectedDayAppointments = appointments
+    .filter(app => isSameDay(parseISO(app.date), selectedDate))
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 
   // AÇÕES
   const handlePrevMonth = () => setCurrentDate(subMonths(currentDate, 1))
@@ -69,13 +81,17 @@ export function CalendarView({ appointments: initialAppointments, userRole }: Ca
     setTimeout(() => setSelectedAppointment(null), 300)
   }
 
-  // --- A MÁGICA DO CANCELAMENTO ACONTECE AQUI ---
+  const handleRemarcar = () => {
+     if(selectedAppointment) {
+         router.push(`/agendamentos/editar/${selectedAppointment.id}`)
+     }
+  }
+
   const handleConfirmCancel = async () => {
     if (!selectedAppointment) return
 
     setCanceling(true)
     try {
-      // 1. Atualiza no Banco
       const { error } = await supabase
         .from('appointments')
         .update({ status: 'canceled' })
@@ -83,127 +99,172 @@ export function CalendarView({ appointments: initialAppointments, userRole }: Ca
 
       if (error) throw error
 
-      // 2. ATUALIZAÇÃO VISUAL IMEDIATA (Remove da lista local)
       setAppointments((prev) => prev.filter(a => a.id !== selectedAppointment.id))
-      
-      toast.success('Agendamento cancelado com sucesso.')
-      
-      // 3. Fecha tudo
+      toast.success('Agendamento cancelado.')
       handleCloseDetails()
-      
-      // 4. Atualiza os dados do servidor em background
       router.refresh()
 
     } catch (error) {
       console.error(error)
-      toast.error('Erro ao cancelar agendamento.')
+      toast.error('Erro ao cancelar.')
     } finally {
       setCanceling(false)
     }
   }
 
-  const handleRemarcar = () => {
-     if(selectedAppointment) {
-         router.push(`/agendamentos/editar/${selectedAppointment.id}`)
-     }
-  }
-
   return (
-    <div className="h-full flex flex-col p-4 md:p-6">
+    // AQUI ESTÁ A MUDANÇA: 'mx-3 md:mx-0' para dar o espaçamento no mobile
+    <div className="flex flex-col lg:flex-row h-full bg-zinc-900 rounded-2xl overflow-hidden border border-zinc-800 mx-3 md:mx-0 shadow-xl">
       
-      {/* Cabeçalho do Calendário */}
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold capitalize text-zinc-100 flex items-center gap-2">
-           <CalendarIcon className="text-amber-500" />
-           {format(currentDate, 'MMMM yyyy', { locale: ptBR })}
-        </h2>
-        <div className="flex gap-1">
-          <button onClick={handlePrevMonth} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
-            <ChevronLeft size={20} />
-          </button>
-          <button onClick={handleNextMonth} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
-            <ChevronRight size={20} />
-          </button>
+      {/* LADO ESQUERDO: CALENDÁRIO */}
+      <div className="p-4 lg:w-7/12 border-b lg:border-b-0 lg:border-r border-zinc-800">
+        
+        <div className="flex items-center justify-between mb-6 px-2">
+          <h2 className="text-lg font-bold capitalize text-zinc-100 flex items-center gap-2">
+             <CalendarIcon className="text-amber-500 w-5 h-5" />
+             {format(currentDate, 'MMMM yyyy', { locale: ptBR })}
+          </h2>
+          <div className="flex gap-1">
+            <button onClick={handlePrevMonth} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
+              <ChevronLeft size={20} />
+            </button>
+            <button onClick={handleNextMonth} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
+              <ChevronRight size={20} />
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-7 gap-y-2 gap-x-1">
+          {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => (
+            <div key={day} className="text-center text-[10px] font-bold text-zinc-500 uppercase py-2">
+              {day}
+            </div>
+          ))}
+
+          {emptyDays.map((_, i) => <div key={`empty-${i}`} />)}
+
+          {daysInMonth.map(day => {
+            const isSelected = isSameDay(day, selectedDate)
+            const isTodayDate = isToday(day)
+            
+            // Lógica das Bolinhas
+            const dayApps = getAppointmentsOnDate(day)
+            const count = dayApps.length
+            const hasApp = count > 0
+
+            return (
+              <button
+                key={day.toISOString()}
+                onClick={() => setSelectedDate(day)}
+                className={`
+                  relative aspect-square rounded-xl flex flex-col items-center justify-center transition-all duration-200 border
+                  
+                  ${isSelected 
+                    ? 'border-amber-500 ring-1 ring-amber-500 bg-zinc-800 z-10' 
+                    : 'border-transparent hover:bg-zinc-800'
+                  }
+
+                  ${!isSelected && hasApp 
+                    ? 'bg-amber-500/10 border-amber-500/20 shadow-[0_0_10px_-4px_rgba(245,158,11,0.2)]' 
+                    : ''
+                  }
+
+                  ${!isSelected && !hasApp ? 'text-zinc-400' : ''}
+                `}
+              >
+                <span className={`text-sm mb-0.5 ${isTodayDate && !isSelected ? 'text-amber-500 font-bold underline' : ''} ${hasApp ? 'font-bold text-zinc-200' : ''}`}>
+                  {format(day, 'd')}
+                </span>
+                
+                {/* BOLINHAS MÚLTIPLAS */}
+                {hasApp && (
+                   <div className="flex gap-0.5 mt-0.5 h-1.5 items-end">
+                     {Array.from({ length: Math.min(count, 4) }).map((_, i) => (
+                        <div 
+                          key={i} 
+                          className={`
+                            w-1 h-1 rounded-full 
+                            ${isSelected ? 'bg-amber-500' : 'bg-amber-500/80'}
+                          `} 
+                        />
+                     ))}
+                     {count > 4 && <div className="w-0.5 h-0.5 bg-amber-500/50 rounded-full self-center ml-px" />}
+                   </div>
+                )}
+              </button>
+            )
+          })}
         </div>
       </div>
 
-      {/* GRID DO CALENDÁRIO */}
-      <div className="grid grid-cols-7 gap-px bg-zinc-800 rounded-2xl overflow-hidden border border-zinc-800 flex-1">
-        
-        {/* Dias da Semana */}
-        {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => (
-          <div key={day} className="bg-zinc-900 p-2 text-center text-xs font-bold text-zinc-500 uppercase tracking-wider">
-            {day}
-          </div>
-        ))}
-
-        {/* Dias Vazios (início do mês) */}
-        {emptyDays.map((_, i) => (
-          <div key={`empty-${i}`} className="bg-zinc-900/50 min-h-[100px]" />
-        ))}
-
-        {/* Dias do Mês */}
-        {daysInMonth.map(day => {
-          const dayAppointments = appointments.filter(app => isSameDay(parseISO(app.date), day))
-          const isTodayDate = isToday(day)
-
-          return (
-            <div key={day.toISOString()} className={`bg-zinc-900 p-2 min-h-[100px] hover:bg-zinc-800/50 transition-colors relative group border-t border-zinc-800/50`}>
-              <span className={`text-sm font-bold block mb-2 ${isTodayDate ? 'text-amber-500' : 'text-zinc-400'}`}>
-                {format(day, 'd')}
+      {/* LADO DIREITO: LISTA */}
+      <div className="flex-1 bg-zinc-950/50 flex flex-col min-h-[300px]">
+        <div className="p-4 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-sm sticky top-0 z-10">
+           <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider flex items-center justify-between">
+              Agendamentos
+              <span className="text-zinc-600 normal-case font-normal text-xs">
+                 {format(selectedDate, "dd 'de' MMMM", { locale: ptBR })}
               </span>
-              
-              {/* Lista de Agendamentos do Dia */}
-              <div className="space-y-1">
-                {dayAppointments.map(app => (
-                  <button
-                    key={app.id}
-                    onClick={() => handleOpenDetails(app)}
-                    className="w-full text-left px-2 py-1.5 rounded bg-zinc-800 border border-zinc-700/50 hover:border-amber-500/50 hover:bg-zinc-700 transition-all group/card overflow-hidden"
-                  >
-                    <div className="flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
-                        <span className="text-[10px] font-bold text-zinc-300 truncate">
-                            {format(parseISO(app.date), 'HH:mm')}
-                        </span>
-                        <span className="text-[10px] text-zinc-500 truncate group-hover/card:text-zinc-300">
-                             {app.profiles.full_name}
-                        </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )
-        })}
+           </h3>
+        </div>
+
+        <div className="p-4 space-y-3 overflow-y-auto flex-1 custom-scrollbar">
+           {selectedDayAppointments.length === 0 ? (
+             <div className="flex flex-col items-center justify-center h-full text-zinc-600 py-10 gap-3">
+                <div className="w-12 h-12 rounded-full bg-zinc-900 flex items-center justify-center">
+                   <CalendarIcon size={20} className="opacity-50"/>
+                </div>
+                <p className="text-sm">Nada agendado para este dia.</p>
+             </div>
+           ) : (
+             selectedDayAppointments.map(app => (
+               <button
+                 key={app.id}
+                 onClick={() => handleOpenDetails(app)}
+                 className="w-full bg-zinc-900 border border-zinc-800 p-4 rounded-xl flex items-center gap-4 hover:border-amber-500/50 hover:bg-zinc-800 transition-all group text-left"
+               >
+                  <div className="bg-zinc-950 px-3 py-2 rounded-lg border border-zinc-800 group-hover:border-zinc-700 min-w-[60px] text-center">
+                     <span className="block text-amber-500 font-bold text-sm">
+                        {format(parseISO(app.date), 'HH:mm')}
+                     </span>
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                     <h4 className="font-bold text-zinc-200 truncate group-hover:text-amber-500 transition-colors">
+                        {app.profiles.full_name}
+                     </h4>
+                     <p className="text-xs text-zinc-500 truncate mt-0.5 flex items-center gap-1">
+                        <Scissors size={10} />
+                        {app.services?.name || 'Serviço Personalizado'}
+                     </p>
+                  </div>
+               </button>
+             ))
+           )}
+        </div>
       </div>
 
-      {/* ======================================================= */}
-      {/* MODAL DE DETALHES */}
-      {/* ======================================================= */}
+      {/* MODAL DETALHES */}
       {isDetailsOpen && selectedAppointment && !isCancelConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            
-            {/* Header Modal */}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
             <div className="p-4 flex items-center justify-between border-b border-zinc-800">
                 <div>
                     <h3 className="font-bold text-lg text-white">Agendamento</h3>
                     <p className="text-xs text-zinc-500">Detalhes do horário marcado.</p>
                 </div>
-                <button onClick={handleCloseDetails} className="text-zinc-500 hover:text-white">
+                <button onClick={handleCloseDetails} className="text-zinc-500 hover:text-white p-2">
                     <X size={20} />
                 </button>
             </div>
 
-            {/* Conteúdo Modal */}
             <div className="p-6 space-y-4">
                 <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
-                    <h4 className="text-amber-500 font-bold text-lg mb-4 flex justify-between">
-                         {selectedAppointment.services?.name || 'Corte'}
-                         <span className="bg-green-500/10 text-green-500 text-xs px-2 py-1 rounded border border-green-500/20 h-fit">
-                             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(selectedAppointment.services?.price || 0)}
-                         </span>
+                    <h4 className="text-amber-500 font-bold text-lg mb-4 flex justify-between items-center">
+                          {selectedAppointment.services?.name || 'Corte'}
+                          <span className="bg-green-500/10 text-green-500 text-xs px-2 py-1 rounded border border-green-500/20 font-mono">
+                              {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(selectedAppointment.services?.price || 0)}
+                          </span>
                     </h4>
                     
                     <div className="space-y-3">
@@ -231,7 +292,7 @@ export function CalendarView({ appointments: initialAppointments, userRole }: Ca
                         onClick={() => setIsCancelConfirmOpen(true)}
                         className="flex-1 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
                     >
-                       <X size={18} /> Cancelar
+                        <X size={18} /> Cancelar
                     </button>
                 </div>
             </div>
@@ -239,20 +300,17 @@ export function CalendarView({ appointments: initialAppointments, userRole }: Ca
         </div>
       )}
 
-      {/* ======================================================= */}
-      {/* MODAL DE CONFIRMAÇÃO DE CANCELAMENTO */}
-      {/* ======================================================= */}
+      {/* MODAL CANCELAR */}
       {isCancelConfirmOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-            <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full max-w-sm p-6 text-center shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+            <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full max-w-sm p-6 text-center shadow-2xl">
                 <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-500/20">
                     <AlertTriangle className="text-red-500 w-8 h-8" />
                 </div>
                 
                 <h3 className="text-xl font-bold text-white mb-2">Cancelar Horário?</h3>
                 <p className="text-zinc-400 text-sm mb-6">
-                    Você vai remover o agendamento de <br/>
-                    <strong className="text-zinc-200">{selectedAppointment?.profiles.full_name}</strong>.
+                    Você tem certeza que deseja cancelar o agendamento de <strong className="text-zinc-200">{selectedAppointment?.profiles.full_name}</strong>?
                 </p>
 
                 <div className="flex gap-3">

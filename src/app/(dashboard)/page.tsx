@@ -48,7 +48,7 @@ export default async function Home() {
             <Calendar size={20} strokeWidth={2.5} />
             Agendar Agora
           </Link>
-          <Link href="/clientes" className="border-2 border-zinc-800 hover:bg-zinc-900/50 hover:border-zinc-700 text-zinc-300 font-bold py-4 px-8 rounded-lg transition-all flex items-center justify-center gap-2 uppercase tracking-wide">
+          <Link href="/area-cliente" className="border-2 border-zinc-800 hover:bg-zinc-900/50 hover:border-zinc-700 text-zinc-300 font-bold py-4 px-8 rounded-lg transition-all flex items-center justify-center gap-2 uppercase tracking-wide">
             <User size={20} strokeWidth={2.5} />
             Área do Cliente
           </Link>
