@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { Search, User, Phone, Loader2, MessageCircle, Pencil, Trash2, X, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
+import { useRouter } from 'next/navigation' // Import necessário para o redirecionamento
 
 // Tipo Completo do Cliente
 type ClientProfile = {
@@ -26,6 +27,7 @@ type ClientProfile = {
 
 export default function ClientesPage() {
   const supabase = createClient()
+  const router = useRouter() // Hook para navegação
   const [loading, setLoading] = useState(true)
   const [clients, setClients] = useState<ClientProfile[]>([])
   const [searchTerm, setSearchTerm] = useState('')
@@ -34,35 +36,62 @@ export default function ClientesPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingClient, setEditingClient] = useState<ClientProfile | null>(null)
   
-  // Estado do Modal de Exclusão (NOVO)
+  // Estado do Modal de Exclusão
   const [clientToDelete, setClientToDelete] = useState<ClientProfile | null>(null)
   
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
-  // 1. Busca os Clientes
-  async function loadClients() {
-    try {
-      setLoading(true)
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('role', 'customer')
-        .order('full_name', { ascending: true })
-
-      if (error) throw error
-      setClients(data || [])
-    } catch (error) {
-      console.error(error)
-      toast.error('Erro ao carregar clientes.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
+  // 1. Lógica de Segurança + Busca de Clientes
+  // 1. Lógica de Segurança + Busca de Clientes
   useEffect(() => {
-    loadClients()
-  }, [])
+    async function checkUserAndLoadClients() {
+      try {
+        setLoading(true) // Começa carregando
+        
+        const { data: { user } } = await supabase.auth.getUser()
+        
+        if (!user) {
+            router.replace('/login')
+            return // Mantenha loading true enquanto redireciona
+        }
+
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single()
+
+        // 🚨 SE NÃO FOR ADMIN
+        if (profile?.role !== 'admin') {
+            router.replace('/area-cliente') 
+            // 🛑 O PULO DO GATO: Return aqui SEM setar loading(false)
+            // Assim a tela continua com o spinner até mudar de página
+            return 
+        }
+
+        // --- SÓ EXECUTA ISSO SE FOR ADMIN ---
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('role', 'customer')
+          .order('full_name', { ascending: true })
+
+        if (error) throw error
+        setClients(data || [])
+        
+        // Só libera a tela se chegou até aqui (é admin e carregou dados)
+        setLoading(false)
+
+      } catch (error) {
+        console.error(error)
+        toast.error('Erro ao carregar dados.')
+        setLoading(false) // Em caso de erro de rede, libera para não travar
+      }
+    }
+
+    checkUserAndLoadClients()
+  }, [router, supabase]) // Executa ao montar a tela
 
   // --- MÁSCARAS ---
   const maskPhone = (v: string) => v.replace(/\D/g, '').replace(/(\d{2})(\d)/, '($1) $2').replace(/(\d{5})(\d)/, '$1-$2').replace(/(-\d{4})\d+?$/, '$1')
@@ -120,7 +149,9 @@ export default function ClientesPage() {
         
         toast.success('Cliente atualizado!')
         setIsModalOpen(false)
-        loadClients()
+        
+        // Atualiza a lista localmente para não precisar buscar tudo de novo
+        setClients(prev => prev.map(c => c.id === editingClient.id ? editingClient : c))
     } catch (error) {
         console.error(error)
         toast.error('Erro ao atualizar.')
@@ -129,7 +160,7 @@ export default function ClientesPage() {
     }
   }
 
-  // --- EXCLUIR CLIENTE (NOVO) ---
+  // --- EXCLUIR CLIENTE ---
   const handleConfirmDelete = async () => {
     if (!clientToDelete) return
 
@@ -139,8 +170,8 @@ export default function ClientesPage() {
         if (error) throw error
         
         toast.success('Cliente removido com sucesso.')
-        setClientToDelete(null) // Fecha o modal
-        loadClients() // Atualiza lista
+        setClients(prev => prev.filter(c => c.id !== clientToDelete.id)) // Remove localmente
+        setClientToDelete(null)
     } catch (error) {
         console.error(error)
         toast.error('Erro ao excluir. Verifique se o cliente tem agendamentos.')
@@ -149,7 +180,7 @@ export default function ClientesPage() {
     }
   }
 
-  // Filtro
+  // Filtro de Busca
   const filteredClients = clients.filter(client => {
     const search = searchTerm.toLowerCase()
     return (
@@ -159,8 +190,17 @@ export default function ClientesPage() {
     )
   })
 
+  // Se estiver carregando (verificando permissão), mostra spinner
+  if (loading) {
+    return (
+        <div className="flex h-[80vh] w-full items-center justify-center">
+            <Loader2 className="animate-spin text-amber-500 w-10 h-10" />
+        </div>
+    )
+  }
+
   return (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-6 pb-20 p-4 md:p-0">
       
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -186,11 +226,7 @@ export default function ClientesPage() {
       </div>
 
       {/* Lista */}
-      {loading ? (
-        <div className="flex justify-center p-20">
-            <Loader2 className="animate-spin text-amber-500 w-10 h-10" />
-        </div>
-      ) : filteredClients.length === 0 ? (
+      {filteredClients.length === 0 ? (
         <div className="text-center p-20 bg-zinc-900/50 border border-zinc-800 rounded-xl">
             <p className="text-zinc-500">Nenhum cliente encontrado.</p>
         </div>
@@ -211,7 +247,7 @@ export default function ClientesPage() {
                             <Pencil size={16} />
                         </button>
                         <button 
-                            onClick={() => setClientToDelete(client)} // Abre o modal customizado
+                            onClick={() => setClientToDelete(client)} 
                             className="p-2 bg-red-900/20 hover:bg-red-900/40 text-red-400 rounded-lg transition-colors"
                             title="Excluir"
                         >
@@ -275,7 +311,7 @@ export default function ClientesPage() {
                                 value={editingClient.phone || ''} onChange={e => setEditingClient({...editingClient, phone: maskPhone(e.target.value)})} />
                         </div>
                     </div>
-                    {/* (Restante do formulário de endereço aqui... igual ao anterior) */}
+                    
                      <div className="space-y-4 pt-4 border-t border-zinc-800">
                         <h3 className="text-sm font-bold text-zinc-500 uppercase tracking-wider">Endereço</h3>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

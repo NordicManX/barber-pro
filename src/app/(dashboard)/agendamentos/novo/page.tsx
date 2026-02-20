@@ -2,310 +2,351 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/utils/supabase/client'
-import { 
-  User, Scissors, CheckCircle2, Loader2, ArrowLeft, Clock, 
-  Calendar as CalendarIcon, ChevronLeft, ChevronRight 
-} from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { toast } from 'sonner'
-import Link from 'next/link'
-import { 
-  format, addMonths, subMonths, startOfMonth, endOfMonth, 
-  eachDayOfInterval, isSameDay, isBefore, startOfDay 
-} from 'date-fns'
+import { format, addDays, isSameDay, startOfToday, isBefore, set } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
+import { Calendar as CalendarIcon, Clock, Scissors, User, CheckCircle2, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
+import Image from 'next/image'
+import { sendAppointmentEmail } from '@/app/actions/send-appointment-email'
 
-export const dynamic = 'force-dynamic'
+// Tipos
+type Service = {
+    id: string
+    name: string
+    price: number
+    duration_minutes: number
+}
 
-type Service = { id: string; name: string; price: number; duration_minutes: number }
-type Profile = { id: string; full_name: string; avatar_url: string | null }
+type Barber = {
+    id: string
+    full_name: string
+    avatar_url: string | null
+    role: string
+}
 
 export default function NewAppointmentPage() {
-  const supabase = createClient()
-  const router = useRouter()
+    const supabase = createClient()
+    const router = useRouter()
 
-  const [loading, setLoading] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
-  const [services, setServices] = useState<Service[]>([])
-  const [barbers, setBarbers] = useState<Profile[]>([])
-  const [selectedService, setSelectedService] = useState<Service | null>(null)
-  const [selectedBarber, setSelectedBarber] = useState<Profile | null>(null)
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null) 
-  const [selectedTime, setSelectedTime] = useState<string>('')
-  const [busySlots, setBusySlots] = useState<string[]>([])
-  const [loadingSlots, setLoadingSlots] = useState(false)
-  const [currentMonth, setCurrentMonth] = useState(new Date())
+    // --- ESTADOS ---
+    const [services, setServices] = useState<Service[]>([])
+    const [barbers, setBarbers] = useState<Barber[]>([])
+    const [loading, setLoading] = useState(true)
+    const [submitting, setSubmitting] = useState(false)
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const { data: servicesData } = await supabase.from('services').select('*').eq('active', true)
-        const { data: profilesData } = await supabase.from('profiles').select('*').in('role', ['barber', 'admin'])
-        if (servicesData) setServices(servicesData)
-        if (profilesData) setBarbers(profilesData)
-      } catch (err) {
-        console.error(err)
-      } finally {
-        setLoading(false)
-      }
+    // Seleções do Usuário
+    const [selectedService, setSelectedService] = useState<Service | null>(null)
+    const [selectedBarber, setSelectedBarber] = useState<Barber | null>(null)
+    const [selectedDate, setSelectedDate] = useState<Date>(startOfToday())
+    const [selectedTime, setSelectedTime] = useState<string | null>(null)
+
+    // Dados para Calendário
+    const today = startOfToday()
+    const [currentMonth, setCurrentMonth] = useState(today)
+
+    // Horários disponíveis
+    const timeSlots = [
+        '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+        '13:00', '13:30', '14:00', '14:30', '15:00', '15:30',
+        '16:00', '16:30', '17:00', '17:30', '18:00', '18:30'
+    ]
+
+    // --- LOAD DATA ---
+    useEffect(() => {
+        async function loadData() {
+            setLoading(true)
+
+            const { data: servicesData } = await supabase
+                .from('services')
+                .select('*')
+                .order('price')
+
+            if (servicesData) setServices(servicesData)
+
+            const { data: barbersData } = await supabase
+                .from('profiles')
+                .select('id, full_name, avatar_url, role')
+                .in('role', ['barber', 'admin'])
+                .order('full_name')
+
+            if (barbersData) setBarbers(barbersData)
+
+            setLoading(false)
+        }
+        loadData()
+    }, [])
+
+    // --- HELPERS DE CALENDÁRIO ---
+    const daysInMonth = Array.from({ length: 35 }, (_, i) => {
+        const start = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1)
+        const startDate = addDays(start, -start.getDay())
+        return addDays(startDate, i)
+    })
+
+    // --- NOVA FUNÇÃO: VERIFICA SE O HORÁRIO JÁ PASSOU ---
+    const isTimeDisabled = (time: string) => {
+        const now = new Date(); // Hora exata agora
+        const [hours, minutes] = time.split(':').map(Number);
+
+        // 1. Cria o objeto Date específico desse botão (Data Selecionada + Horário do Botão)
+        const slotDateTime = set(selectedDate, {
+            hours,
+            minutes,
+            seconds: 0,
+            milliseconds: 0
+        });
+
+        // 2. A Mágica: Se esse momento já passou, bloqueia.
+        // Isso resolve "Hoje" (passado), "Ontem" (tudo bloqueado) e "Amanhã" (tudo liberado)
+        return isBefore(slotDateTime, now);
     }
-    loadData()
-  }, [])
 
-  useEffect(() => {
-    async function checkAvailability() {
-      if (!selectedDate || !selectedBarber) return
-      setLoadingSlots(true)
-      const dateStr = format(selectedDate, 'yyyy-MM-dd')
-      const startOfDayStr = `${dateStr}T00:00:00`
-      const endOfDayStr = `${dateStr}T23:59:59`
-      const { data: appointments } = await supabase
-        .from('appointments')
-        .select('date')
-        .eq('barber_id', selectedBarber.id)
-        .gte('date', startOfDayStr)
-        .lte('date', endOfDayStr)
-        .neq('status', 'canceled')
+    const handleConfirm = async () => {
+        if (!selectedService || !selectedBarber || !selectedTime) {
+            toast.error("Preencha todos os campos!")
+            return
+        }
 
-      if (appointments) {
-        const times = appointments.map(app => {
-            const d = new Date(app.date)
-            return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        setSubmitting(true)
+
+        const [hours, minutes] = selectedTime.split(':').map(Number)
+        const finalDate = new Date(selectedDate)
+        finalDate.setHours(hours, minutes, 0, 0)
+
+        const { data: { user } } = await supabase.auth.getUser()
+
+        if (!user || !user.email) {
+            toast.error("Você precisa estar logado.")
+            router.push('/login')
+            return
+        }
+
+        const { error } = await supabase.from('appointments').insert({
+            user_id: user.id,
+            barber_id: selectedBarber.id,
+            service_id: selectedService.id,
+            date: finalDate.toISOString(),
+            status: 'pending'
         })
-        setBusySlots(times)
-      } else {
-        setBusySlots([])
-      }
-      setLoadingSlots(false)
+
+        if (error) {
+            console.error(error)
+            toast.error("Erro ao agendar. Tente novamente.")
+        } else {
+            // Tenta enviar o email, mas não bloqueia se falhar (apenas loga)
+            try {
+                await sendAppointmentEmail({
+                    clientName: "Cliente", // Pode buscar o nome real no profile se quiser
+                    clientEmail: user.email,
+                    barberName: selectedBarber.full_name,
+                    serviceName: selectedService.name,
+                    date: format(selectedDate, 'dd/MM/yyyy'),
+                    time: selectedTime
+                })
+            } catch (emailError) {
+                console.error("Falha ao enviar email:", emailError)
+            }
+
+            toast.success("Agendamento realizado com sucesso!")
+            router.push('/agendamentos')
+        }
+        setSubmitting(false)
     }
-    checkAvailability()
-  }, [selectedDate, selectedBarber])
 
-  const calendarDays = eachDayOfInterval({
-    start: startOfMonth(currentMonth),
-    end: endOfMonth(currentMonth)
-  })
-  const startEmptyDays = Array.from({ length: startOfMonth(currentMonth).getDay() })
-  const timeSlots = ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30']
-
-  const handleSave = async () => {
-    if (!selectedService || !selectedBarber || !selectedDate || !selectedTime) {
-      toast.warning('Preencha todos os campos.')
-      return
+    if (loading) {
+        return <div className="flex h-screen items-center justify-center text-amber-500"><Loader2 className="animate-spin w-10 h-10" /></div>
     }
-    setSubmitting(true)
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        router.push('/login')
-        return
-      }
-      const dateStr = format(selectedDate, 'yyyy-MM-dd')
-      const finalDateTime = new Date(`${dateStr}T${selectedTime}:00`)
-      const { error } = await supabase.from('appointments').insert({
-          user_id: user.id,
-          service_id: selectedService.id,
-          barber_id: selectedBarber.id,
-          date: finalDateTime.toISOString(),
-          status: 'pending'
-        })
-      if (error) throw error
-      toast.success('Agendamento realizado!')
-      router.push('/agendamentos')
-      router.refresh()
-    } catch (error) {
-      console.error(error)
-      toast.error('Erro ao agendar.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
 
-  const formatMoney = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val)
+    return (
+        <div className="max-w-6xl mx-auto space-y-8 pb-20 animate-in fade-in duration-500 px-4 md:px-0">
 
-  if (loading) return <div className="flex flex-col items-center justify-center h-[50vh] gap-4"><Loader2 className="animate-spin text-amber-500 w-10 h-10"/><p className="text-zinc-500">Carregando...</p></div>
+            {/* Header */}
+            <div>
+                <h1 className="text-3xl font-bold text-zinc-100">Novo Agendamento</h1>
+                <p className="text-zinc-400">Monte seu estilo.</p>
+            </div>
 
-  return (
-    // MAX-W-5XL: Permite que no Desktop fique largo. No Mobile ele se ajusta.
-    <div className="w-full max-w-5xl mx-auto pb-40">
-      
-      {/* HEADER */}
-      <div className="flex items-center gap-4 mb-8">
-        <Link href="/" className="p-2 -ml-2 text-zinc-400 hover:text-white rounded-full hover:bg-zinc-900 transition-colors">
-            <ArrowLeft size={24} />
-        </Link>
-        <div>
-            <h1 className="text-2xl font-bold text-zinc-100 leading-none">Novo Agendamento</h1>
-            <p className="text-sm text-zinc-500">Monte seu estilo.</p>
-        </div>
-      </div>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
-      {/* GRID RESPONSIVO: 
-          - grid-cols-1 no Mobile (um embaixo do outro)
-          - grid-cols-12 no Desktop (layout dividido)
-      */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
-        
-        {/* COLUNA DA ESQUERDA (Serviços e Profissionais) - Ocupa 7/12 no Desktop */}
-        <div className="md:col-span-7 space-y-8">
-            
-            {/* 1. SERVIÇO */}
-            <section className="space-y-3">
-                <h2 className="text-amber-500 font-bold text-sm uppercase tracking-wider flex items-center gap-2">
-                    <Scissors size={16} /> 1. Serviço
-                </h2>
-                <div className="grid grid-cols-1 gap-3">
-                    {services.map(service => (
-                        <button 
-                            key={service.id}
-                            onClick={() => setSelectedService(service)}
-                            className={`w-full p-4 rounded-xl border text-left transition-all relative overflow-hidden group
-                                ${selectedService?.id === service.id 
-                                    ? 'bg-amber-500/10 border-amber-500 ring-1 ring-amber-500' 
-                                    : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'
-                                }`}
-                        >
-                            <div className="flex justify-between items-center z-10 relative">
-                                <h3 className={`font-bold ${selectedService?.id === service.id ? 'text-amber-500' : 'text-zinc-100'}`}>
-                                    {service.name}
-                                </h3>
-                                <span className="font-semibold text-zinc-300">{formatMoney(service.price)}</span>
-                            </div>
-                            <p className="text-zinc-500 text-xs mt-1">{service.duration_minutes} min</p>
-                        </button>
-                    ))}
-                </div>
-            </section>
+                {/* COLUNA DA ESQUERDA (SERVIÇOS E PROFISSIONAIS) */}
+                <div className="lg:col-span-7 space-y-8">
 
-            {/* 2. PROFISSIONAL */}
-            <section className="space-y-3">
-                <h2 className="text-amber-500 font-bold text-sm uppercase tracking-wider flex items-center gap-2">
-                    <User size={16} /> 2. Profissional
-                </h2>
-                <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-hide">
-                    {barbers.map(barber => (
-                        <button 
-                            key={barber.id}
-                            onClick={() => setSelectedBarber(barber)}
-                            className={`flex-shrink-0 min-w-[100px] p-3 rounded-xl border transition-all flex flex-col items-center gap-2
-                                ${selectedBarber?.id === barber.id 
-                                    ? 'bg-amber-500/10 border-amber-500 ring-1 ring-amber-500' 
-                                    : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'
-                                }`}
-                        >
-                            <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-lg text-zinc-400 border border-zinc-700 overflow-hidden">
-                                {barber.avatar_url ? (
-                                    <img src={barber.avatar_url} className="w-full h-full object-cover"/> 
-                                ) : (
-                                    barber.full_name?.charAt(0)
-                                )}
-                            </div>
-                            <span className={`text-xs font-bold truncate w-full text-center ${selectedBarber?.id === barber.id ? 'text-amber-500' : 'text-zinc-300'}`}>
-                                {barber.full_name.split(' ')[0]}
-                            </span>
-                        </button>
-                    ))}
-                </div>
-            </section>
-        </div>
-
-        {/* COLUNA DA DIREITA (Data, Hora e Total) - Ocupa 5/12 no Desktop */}
-        <div className="md:col-span-5 space-y-8 sticky top-4">
-            
-            {/* 3. DATA E HORA */}
-            <section className="space-y-3">
-                <h2 className="text-amber-500 font-bold text-sm uppercase tracking-wider flex items-center gap-2">
-                    <CalendarIcon size={16} /> 3. Data e Hora
-                </h2>
-                
-                {/* CALENDÁRIO */}
-                <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 w-full">
-                    <div className="flex justify-between items-center mb-4">
-                        <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-1 hover:bg-zinc-800 rounded text-zinc-400"><ChevronLeft size={20} /></button>
-                        <span className="font-bold capitalize text-zinc-200">{format(currentMonth, 'MMMM yyyy', { locale: ptBR })}</span>
-                        <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-1 hover:bg-zinc-800 rounded text-zinc-400"><ChevronRight size={20} /></button>
-                    </div>
-                    <div className="grid grid-cols-7 text-center text-xs text-zinc-500 mb-2 font-bold">
-                        {['D','S','T','Q','Q','S','S'].map((d, i) => <span key={i}>{d}</span>)}
-                    </div>
-                    <div className="grid grid-cols-7 gap-1">
-                        {startEmptyDays.map((_, i) => <div key={`empty-${i}`} />)}
-                        {calendarDays.map(day => {
-                            const isSelected = selectedDate && isSameDay(day, selectedDate)
-                            const isPast = isBefore(day, startOfDay(new Date()))
-                            return (
+                    {/* 1. SELEÇÃO DE SERVIÇO */}
+                    <section>
+                        <h2 className="text-amber-500 font-bold text-sm tracking-wider uppercase mb-4 flex items-center gap-2">
+                            <Scissors size={16} /> 1. Serviço
+                        </h2>
+                        <div className="space-y-3">
+                            {services.map(service => (
                                 <button
-                                    key={day.toISOString()}
-                                    disabled={isPast}
-                                    onClick={() => setSelectedDate(day)}
-                                    className={`
-                                        w-full aspect-square rounded-lg flex items-center justify-center text-sm font-medium transition-all
-                                        ${isSelected ? 'bg-amber-500 text-zinc-950 font-bold shadow-lg shadow-amber-500/20' : 'text-zinc-300 hover:bg-zinc-800'}
-                                        ${isPast ? 'opacity-20 cursor-not-allowed' : ''}
-                                    `}
+                                    key={service.id}
+                                    onClick={() => setSelectedService(service)}
+                                    className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all
+                                ${selectedService?.id === service.id
+                                            ? 'bg-zinc-800 border-amber-500 ring-1 ring-amber-500'
+                                            : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/50'}
+                            `}
                                 >
-                                    {format(day, 'd')}
+                                    <div className="text-left">
+                                        <span className={`font-bold block ${selectedService?.id === service.id ? 'text-white' : 'text-zinc-200'}`}>
+                                            {service.name}
+                                        </span>
+                                        <span className="text-xs text-zinc-500">{service.duration_minutes} min</span>
+                                    </div>
+                                    <span className="font-bold text-amber-500">
+                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(service.price)}
+                                    </span>
                                 </button>
-                            )
-                        })}
-                    </div>
-                </div>
+                            ))}
+                        </div>
+                    </section>
 
-                {/* HORÁRIOS */}
-                <div className={`space-y-2 transition-all duration-300 ${!selectedDate || !selectedBarber ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
-                    <label className="block text-xs font-bold text-zinc-500 uppercase ml-1 flex items-center gap-2">
-                        <Clock size={14} /> Horários
-                    </label>
-                    <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl relative min-h-[100px] w-full">
-                        {loadingSlots && (
-                            <div className="absolute inset-0 bg-zinc-900/80 z-20 flex items-center justify-center rounded-2xl backdrop-blur-sm">
-                                <Loader2 className="animate-spin text-amber-500 w-8 h-8" />
+                    {/* 2. SELEÇÃO DE PROFISSIONAL */}
+                    <section>
+                        <h2 className="text-amber-500 font-bold text-sm tracking-wider uppercase mb-4 flex items-center gap-2">
+                            <User size={16} /> 2. Profissional
+                        </h2>
+
+                        {barbers.length === 0 ? (
+                            <div className="p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-500 text-sm">
+                                Nenhum profissional encontrado.
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {barbers.map(barber => (
+                                    <button
+                                        key={barber.id}
+                                        onClick={() => setSelectedBarber(barber)}
+                                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-left
+                                    ${selectedBarber?.id === barber.id
+                                                ? 'bg-zinc-800 border-amber-500 ring-1 ring-amber-500'
+                                                : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/50'}
+                                `}
+                                    >
+                                        <div className="w-10 h-10 rounded-full bg-zinc-800 overflow-hidden relative border border-zinc-700">
+                                            {barber.avatar_url ? (
+                                                <Image src={barber.avatar_url} alt={barber.full_name} fill className="object-cover" />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center text-zinc-500 font-bold">
+                                                    {barber.full_name?.charAt(0).toUpperCase()}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div>
+                                            <span className={`font-bold block text-sm ${selectedBarber?.id === barber.id ? 'text-white' : 'text-zinc-200'}`}>
+                                                {barber.full_name}
+                                            </span>
+                                            <span className="text-[10px] uppercase text-zinc-500 font-bold">
+                                                {barber.role === 'admin' ? 'Superadmin' : 'Barbeiro'}
+                                            </span>
+                                        </div>
+                                    </button>
+                                ))}
                             </div>
                         )}
+                    </section>
+                </div>
+
+                {/* COLUNA DA DIREITA (DATA, HORA E RESUMO) */}
+                <div className="lg:col-span-5 space-y-6">
+
+                    {/* 3. DATA E HORA */}
+                    <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+                        <h2 className="text-amber-500 font-bold text-sm tracking-wider uppercase mb-6 flex items-center gap-2">
+                            <CalendarIcon size={16} /> 3. Data e Hora
+                        </h2>
+
+                        {/* Navegação Mês */}
+                        <div className="flex items-center justify-between mb-4">
+                            <button onClick={() => setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))} className="p-1 hover:bg-zinc-800 rounded"><ChevronLeft size={20} className="text-zinc-400" /></button>
+                            <span className="font-bold text-zinc-200 capitalize">{format(currentMonth, 'MMMM yyyy', { locale: ptBR })}</span>
+                            <button onClick={() => setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))} className="p-1 hover:bg-zinc-800 rounded"><ChevronRight size={20} className="text-zinc-400" /></button>
+                        </div>
+
+                        {/* Grid Dias */}
+                        <div className="grid grid-cols-7 gap-1 mb-6">
+                            {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map(d => (
+                                <div key={d} className="text-center text-xs text-zinc-600 font-bold py-2">{d}</div>
+                            ))}
+                            {daysInMonth.map((day, i) => {
+                                const isSelected = isSameDay(day, selectedDate)
+                                const isTodayDate = isSameDay(day, today)
+                                const isCurrentMonth = day.getMonth() === currentMonth.getMonth()
+
+                                return (
+                                    <button
+                                        key={i}
+                                        onClick={() => {
+                                            setSelectedDate(day)
+                                            setSelectedTime(null) // Reseta horário ao mudar dia
+                                        }}
+                                        disabled={day < startOfToday()}
+                                        className={`
+                                    h-10 rounded-lg text-sm font-medium transition-all
+                                    ${!isCurrentMonth ? 'text-zinc-700' : ''}
+                                    ${isSelected
+                                                ? 'bg-amber-500 text-zinc-950 font-bold'
+                                                : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}
+                                    ${isTodayDate && !isSelected ? 'border border-amber-500/50 text-amber-500' : ''}
+                                    ${day < startOfToday() ? 'opacity-20 cursor-not-allowed hover:bg-transparent' : ''}
+                                `}
+                                    >
+                                        {format(day, 'd')}
+                                    </button>
+                                )
+                            })}
+                        </div>
+
+                        {/* Grid Horários */}
+                        <h3 className="text-xs font-bold text-zinc-500 mb-3 flex items-center gap-1"><Clock size={12} /> HORÁRIOS DISPONÍVEIS</h3>
                         <div className="grid grid-cols-4 gap-2">
                             {timeSlots.map(time => {
-                                const isBusy = busySlots.includes(time)
+                                const isDisabled = isTimeDisabled(time)
+
                                 return (
                                     <button
                                         key={time}
                                         onClick={() => setSelectedTime(time)}
-                                        disabled={isBusy}
-                                        className={`py-2 text-xs rounded-lg border transition-all font-bold w-full
-                                            ${isBusy 
-                                                ? 'bg-zinc-950 border-zinc-900 text-zinc-700 cursor-not-allowed line-through opacity-50' 
-                                                : selectedTime === time 
-                                                    ? 'bg-amber-500 text-zinc-950 border-amber-500 shadow-lg shadow-amber-500/20 scale-105' 
-                                                    : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-                                            }`}
+                                        disabled={isDisabled}
+                                        className={`
+                                    py-2 rounded-lg text-xs font-bold transition-all border
+                                    ${isDisabled
+                                                ? 'bg-zinc-900/50 text-zinc-700 border-zinc-800/50 cursor-not-allowed opacity-50' // Estilo Desabilitado
+                                                : selectedTime === time
+                                                    ? 'bg-zinc-100 text-zinc-950 border-white'
+                                                    : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:border-zinc-600 hover:text-white'
+                                            }
+                                `}
                                     >
                                         {time}
                                     </button>
                                 )
                             })}
                         </div>
+                    </section>
+
+                    {/* RESUMO E CONFIRMAÇÃO */}
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+                        <div className="flex justify-between items-center mb-4">
+                            <span className="text-zinc-400 text-sm font-bold">TOTAL ESTIMADO</span>
+                            <span className="text-2xl font-bold text-green-500">
+                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(selectedService?.price || 0)}
+                            </span>
+                        </div>
+
+                        <button
+                            onClick={handleConfirm}
+                            disabled={!selectedService || !selectedBarber || !selectedTime || submitting}
+                            className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-950 font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-2"
+                        >
+                            {submitting ? <Loader2 className="animate-spin" /> : <CheckCircle2 size={20} />}
+                            CONFIRMAR AGENDAMENTO
+                        </button>
                     </div>
                 </div>
-            </section>
 
-            {/* RESUMO E BOTÃO DE CONFIRMAR */}
-            <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6">
-                <div className="flex justify-between items-center mb-6">
-                    <span className="text-zinc-400 font-bold uppercase text-xs tracking-wider">Total Estimado</span>
-                    <span className="text-2xl font-bold text-green-500">{selectedService ? formatMoney(selectedService.price) : 'R$ 0,00'}</span>
-                </div>
-                
-                <button 
-                    onClick={handleSave}
-                    disabled={submitting || !selectedService || !selectedBarber || !selectedDate || !selectedTime}
-                    className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-950 font-black py-4 px-6 rounded-xl uppercase tracking-wide flex items-center justify-center gap-2 transition-all shadow-lg shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {submitting ? <Loader2 className="animate-spin" /> : <>Confirmar Agendamento <CheckCircle2 size={20} /></>}
-                </button>
             </div>
-
         </div>
-
-      </div>
-    </div>
-  )
+    )
 }

@@ -9,16 +9,19 @@ import {
 import { useRouter, useParams } from 'next/navigation'
 import { toast } from 'sonner'
 import Link from 'next/link'
+// 👇 AQUI ESTAVA FALTANDO ESSE IMPORT!
+import Image from 'next/image' 
 import { 
   format, addMonths, subMonths, startOfMonth, endOfMonth, 
-  eachDayOfInterval, isSameDay, isBefore, startOfDay, parseISO 
+  eachDayOfInterval, isSameDay, isBefore, startOfDay, parseISO, set 
 } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
+import { sendAppointmentEmail } from '@/app/actions/send-appointment-email'
 
 export const dynamic = 'force-dynamic'
 
 type Service = { id: string; name: string; price: number; duration_minutes: number }
-type Profile = { id: string; full_name: string; avatar_url: string | null }
+type Profile = { id: string; full_name: string; avatar_url: string | null; role: string }
 
 export default function EditAppointmentPage() {
   const supabase = createClient()
@@ -46,7 +49,7 @@ export default function EditAppointmentPage() {
   // Controle do Calendário Interno
   const [currentMonth, setCurrentMonth] = useState(new Date())
 
-  // 1. CARREGAR DADOS
+  // 1. CARREGAR DADOS INICIAIS
   useEffect(() => {
     async function loadData() {
       try {
@@ -56,6 +59,7 @@ export default function EditAppointmentPage() {
         if (servicesData) setServices(servicesData)
         if (profilesData) setBarbers(profilesData)
 
+        // Busca o agendamento atual para preencher a tela
         const { data: appointment, error } = await supabase
             .from('appointments')
             .select(`*, services (*), barber:profiles!barber_id (*)`)
@@ -92,7 +96,7 @@ export default function EditAppointmentPage() {
     loadData()
   }, [appointmentId, router])
 
-  // 2. BUSCAR DISPONIBILIDADE
+  // 2. BUSCAR DISPONIBILIDADE (BUSY SLOTS)
   useEffect(() => {
     async function checkAvailability() {
       if (!selectedDate || !selectedBarber) return
@@ -112,7 +116,7 @@ export default function EditAppointmentPage() {
 
       if (appointments) {
         const times = appointments
-            .filter(app => app.id !== appointmentId) // Ignora o próprio agendamento atual
+            .filter(app => app.id !== appointmentId) // Ignora o próprio agendamento atual para não bloquear a si mesmo
             .map(app => {
                 const d = new Date(app.date)
                 return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
@@ -125,6 +129,25 @@ export default function EditAppointmentPage() {
     }
     checkAvailability()
   }, [selectedDate, selectedBarber, appointmentId])
+
+  // --- VALIDAÇÃO DE HORÁRIO PASSADO ---
+  const isTimeDisabled = (time: string) => {
+    if (!selectedDate) return false;
+    
+    const now = new Date();
+    const [hours, minutes] = time.split(':').map(Number);
+    
+    // Cria data exata do slot (Dia Selecionado + Hora do Botão)
+    const slotDateTime = set(selectedDate, { 
+        hours, 
+        minutes, 
+        seconds: 0, 
+        milliseconds: 0 
+    });
+
+    // Se já passou, retorna TRUE (Bloqueado)
+    return isBefore(slotDateTime, now);
+  }
 
   const calendarDays = eachDayOfInterval({
     start: startOfMonth(currentMonth),
@@ -146,9 +169,18 @@ export default function EditAppointmentPage() {
 
     setSubmitting(true)
     try {
-      const dateStr = format(selectedDate, 'yyyy-MM-dd')
-      const finalDateTime = new Date(`${dateStr}T${selectedTime}:00`)
+      // 1. Validar Usuário (para pegar o email)
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user || !user.email) {
+          toast.error("Erro de autenticação.")
+          return
+      }
 
+      // 2. Preparar Data
+      const [hours, minutes] = selectedTime.split(':').map(Number)
+      const finalDateTime = set(selectedDate, { hours, minutes, seconds: 0 })
+
+      // 3. Atualizar no Banco
       const { error } = await supabase
         .from('appointments')
         .update({
@@ -160,7 +192,21 @@ export default function EditAppointmentPage() {
 
       if (error) throw error
 
-      toast.success('Agendamento Atualizado!')
+      // 4. Enviar Email de Confirmação (Reagendamento)
+      try {
+          await sendAppointmentEmail({
+              clientName: "Cliente", 
+              clientEmail: user.email,
+              barberName: selectedBarber.full_name,
+              serviceName: selectedService.name,
+              date: format(selectedDate, 'dd/MM/yyyy'),
+              time: selectedTime
+          })
+      } catch (emailError) {
+          console.error("Falha ao enviar email:", emailError)
+      }
+
+      toast.success('Agendamento Atualizado e Email Enviado!')
       router.push('/agendamentos')
       router.refresh()
 
@@ -178,7 +224,6 @@ export default function EditAppointmentPage() {
   if (loading) return <div className="flex flex-col items-center justify-center h-[50vh] gap-4"><Loader2 className="animate-spin text-amber-500 w-10 h-10"/><p className="text-zinc-500">Carregando dados...</p></div>
 
   return (
-    // ESTRUTURA HÍBRIDA (Igual ao Novo Agendamento)
     <div className="w-full max-w-5xl mx-auto pb-40">
       
       {/* Header */}
@@ -241,9 +286,15 @@ export default function EditAppointmentPage() {
                                     : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'
                                 }`}
                         >
-                            <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-lg text-zinc-400 border border-zinc-700 overflow-hidden">
+                            <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-lg text-zinc-400 border border-zinc-700 overflow-hidden relative">
+                                {/* Aqui é onde o componente Image é usado */}
                                 {barber.avatar_url ? (
-                                    <img src={barber.avatar_url} className="w-full h-full object-cover"/> 
+                                    <Image 
+                                        src={barber.avatar_url} 
+                                        alt={barber.full_name} 
+                                        fill 
+                                        className="object-cover"
+                                    /> 
                                 ) : (
                                     barber.full_name?.charAt(0)
                                 )}
@@ -311,17 +362,20 @@ export default function EditAppointmentPage() {
                         <div className="grid grid-cols-4 gap-2">
                             {timeSlots.map(time => {
                                 const isBusy = busySlots.includes(time)
+                                const isPast = isTimeDisabled(time)
+                                const isDisabled = isBusy || isPast
+
                                 return (
                                     <button
                                         key={time}
                                         onClick={() => setSelectedTime(time)}
-                                        disabled={isBusy}
+                                        disabled={isDisabled}
                                         className={`py-2 text-xs rounded-lg border transition-all font-bold w-full
-                                            ${isBusy 
+                                            ${isDisabled 
                                                 ? 'bg-zinc-950 border-zinc-900 text-zinc-700 cursor-not-allowed line-through opacity-50' 
                                                 : selectedTime === time 
                                                     ? 'bg-amber-500 text-zinc-950 border-amber-500 shadow-lg shadow-amber-500/20 scale-105' 
-                                                    : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                                                    : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200' 
                                             }`}
                                     >
                                         {time}
