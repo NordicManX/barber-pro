@@ -2,19 +2,22 @@ import { type NextRequest } from 'next/server'
 import { updateSession } from '@/utils/supabase/middleware'
 
 export async function middleware(request: NextRequest) {
-  // Essa função updateSession vai verificar o cookie do usuário
+  // Como o 'matcher' lá embaixo já exclui o manifest.json e as imagens,
+  // esta função NEM SERÁ CHAMADA para eles.
+  // Pode deixar apenas a atualização de sessão aqui.
   return await updateSession(request)
 }
 
 export const config = {
   matcher: [
     /*
-     * Aplica o middleware em todas as rotas, EXCETO:
-     * - _next/static (arquivos estáticos)
-     * - _next/image (otimização de imagens)
-     * - favicon.ico (ícone)
-     * - imagens png/jpg/svg
+     * Match all request paths except for the ones starting with:
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - manifest.json (SEU ARQUIVO PWA)
+     * - imagens (svg, png, jpg, etc - SEUS ÍCONES PWA)
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

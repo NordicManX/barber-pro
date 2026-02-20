@@ -1,22 +1,27 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
+import type { NextConfig } from "next";
+import withPWAInit from "@ducanh2912/next-pwa";
+
+const withPWA = withPWAInit({
+  dest: "public",
+  cacheOnFrontEndNav: true,
+  aggressiveFrontEndNavCaching: true,
+  reloadOnOnline: true,
+  disable: process.env.NODE_ENV === "development",
+  workboxOptions: {
+    disableDevLogs: true,
+  },
+});
+
+const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
       {
         protocol: 'https',
-        // Este é o ID do seu projeto Supabase que apareceu no erro
-        hostname: 'oeclpwdarhkahtravihi.supabase.co', 
-        port: '',
-        pathname: '/storage/v1/object/public/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'ui-avatars.com', // Para o avatar gerado automaticamente
-        port: '',
-        pathname: '/api/**',
+        hostname: '**.supabase.co',
       },
     ],
   },
-}
+  // Removemos o bloco 'experimental' e 'turbopack' daqui para evitar erros de tipagem
+};
 
-module.exports = nextConfig
+export default withPWA(nextConfig);
